@@ -6,13 +6,13 @@ import datetime
 import urllib.parse
 import json
 import time
-import os  # <-- for environment variables
+import os
 from supabase import create_client, Client
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Supabase setup ---
 SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")  # <-- get key from environment variable
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 if not SUPABASE_KEY:
     st.error("Supabase key not found. Set the SUPABASE_KEY environment variable.")
     st.stop()
@@ -20,13 +20,8 @@ if not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
-BASE_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
-PARAMS_TEMPLATE = {
-    "locale": "en-US",
-    "attendee": "15",
-    "resourceType": "0",
-    "equipmentQty": "1",
-}
+BASE_SEARCH_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
+BASE_API_URL = "https://anc.ca.apm.activecommunities.com/ottawa/rest/reservation/resource"
 
 # --- Fetch facilities ---
 def get_facilities():
@@ -46,7 +41,7 @@ def get_default_facility_descriptions():
     ext_ids = [item["ExtID"] for item in data.data]
     return [desc for desc, ext in FACILITIES.items() if ext in ext_ids]
 
-# --- Build URL and fetch availability ---
+# --- Build “linkable” URL for reference ---
 def build_url_for_date(date_str, start_time, end_time, facility_ids):
     event_json = {
         "fullDayBooking": False,
@@ -58,28 +53,62 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     }
     encoded_event = urllib.parse.quote(json.dumps(event_json))
     url = (
-        f"{BASE_URL}?locale={PARAMS_TEMPLATE['locale']}"
-        f"&attendee={PARAMS_TEMPLATE['attendee']}"
-        f"&resourceType={PARAMS_TEMPLATE['resourceType']}"
-        f"&equipmentQty={PARAMS_TEMPLATE['equipmentQty']}"
+        f"{BASE_SEARCH_URL}?locale=en-US"
+        f"&attendee=15"
+        f"&resourceType=0"
+        f"&equipmentQty=1"
         f"&eventDateAndTime={encoded_event}"
         f"&facilityCenterIds={','.join(str(fac_id) for fac_id in facility_ids)}"
     )
     return url
 
+# --- Check availability using JSON API ---
 def check_availability(date_str, start_time, end_time, facility_ids):
-    url = build_url_for_date(date_str, start_time, end_time, facility_ids)
+    payload = {
+        "name": "",
+        "attendee": 15,
+        "date_times": [],
+        "event_type_ids": [],
+        "facility_type_ids": [],
+        "amenity_ids": [],
+        "center_id": 0,
+        "center_ids": facility_ids,
+        "client_coordinate": "",
+        "date_time_length": {
+            "dates": [date_str],
+            "start_time": start_time + ":00",
+            "end_time": end_time + ":00",
+            "hours_per_day": 1
+        },
+        "equipment_id": 0,
+        "facility_id": 0,
+        "full_day_booking": False,
+        "order_by_field": "name",
+        "order_direction": "asc",
+        "page_size": 20,
+        "reservation_group_ids": [],
+        "resource_type": 0,
+        "search_client_id": "quickcheck-" + str(time.time()),
+        "start_index": 0
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0"
+    }
+    url_ref = build_url_for_date(date_str, start_time, end_time, facility_ids)
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.post(BASE_API_URL, headers=headers, json=payload, timeout=10)
         if response.status_code == 200:
-            text = response.text
-            status = "No results found" not in text
+            data = response.json()
+            # Check if any item is available
+            available = any(item.get("availability", "").lower() == "available" for item in data['body']['items'])
+            return date_str, available, url_ref
         else:
-            status = False
+            return date_str, False, url_ref
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        status = False
-    return date_str, status, url
+        print(f"Error fetching {url_ref}: {e}")
+        return date_str, False, url_ref
 
 # --- Streamlit UI ---
 st.title("🏒 Ice Time Availability Checker")
@@ -88,7 +117,7 @@ st.markdown("Checks City of Ottawa last minute ice times (LMI for 15 days).")
 st.sidebar.header("Settings")
 st.sidebar.markdown("---")
 
-# --- Session state initialization ---
+# --- Session state ---
 if "start_time" not in st.session_state:
     st.session_state.start_time = datetime.time(8, 0)
 if "end_time" not in st.session_state:
@@ -102,17 +131,9 @@ if "selected_facilities" not in st.session_state:
 start_date = st.sidebar.date_input("Start Date", value=datetime.date.today())
 num_days = st.sidebar.slider("Number of Days to Check", 1, 15, 15)
 
-# Only set `value` if the key isn't already in session_state
-start_time = st.sidebar.time_input(
-    "Start Time", 
-    key="start_time"
-)
-end_time = st.sidebar.time_input(
-    "End Time",
-    key="end_time"
-)
+start_time = st.sidebar.time_input("Start Time", key="start_time")
+end_time = st.sidebar.time_input("End Time", key="end_time")
 
-# Facility selection
 selected_descriptions = st.sidebar.multiselect(
     "Select Facilities",
     options=FACILITY_DESCRIPTIONS,
@@ -123,7 +144,6 @@ facility_ids = [FACILITIES[desc] for desc in selected_descriptions] if selected_
 # Select All / Clear All buttons
 def select_all_facilities():
     st.session_state.selected_facilities = FACILITY_DESCRIPTIONS.copy()
-
 def clear_all_facilities():
     st.session_state.selected_facilities = []
 
@@ -131,7 +151,6 @@ col1, col2 = st.sidebar.columns([1,1])
 col1.button("Select All", on_click=select_all_facilities)
 col2.button("Clear All", on_click=clear_all_facilities)
 
-# Day Filter
 day_filter = st.sidebar.radio(
     "Filter Dates:",
     ["Weekdays","Weekends","Any Day"],
@@ -139,17 +158,15 @@ day_filter = st.sidebar.radio(
     key="day_filter"
 )
 
-# Check Ice Times button
 check_button = st.sidebar.button("Check Ice Times")
 st.sidebar.markdown("---")  # line break before Quick Defaults
 
-# --- Quick Defaults below Check Ice Times ---
+# --- Quick Defaults ---
 def set_weekday_evening():
     st.session_state.start_time = datetime.time(17,0)
     st.session_state.end_time = datetime.time(21,0)
     st.session_state.day_filter = "Weekdays"
     st.session_state.selected_facilities = get_default_facility_descriptions()
-
 def set_weekend():
     st.session_state.start_time = datetime.time(8,0)
     st.session_state.end_time = datetime.time(21,0)
