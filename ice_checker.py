@@ -17,12 +17,12 @@ from supabase import create_client, Client
 import os
 
 # --- Supabase setup ---
-SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inluamhtc2djY290Zml4c2F3c2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4OTI5MzIsImV4cCI6MjA3NDQ2ODkzMn0.2qiBqYStes_4JWDQ8R4RUQfY95pCGF_yGIuVB7MZFjg"
+SUPABASE_URL = "https://cdqilvksolwmnonqhlbc.supabase.co"
+SUPABASE_KEY = "YOUR_SUPABASE_KEY"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
-MAX_BROWSERS = 3  # Reduced for Streamlit Cloud memory
+MAX_BROWSERS = 3  # Reduce for Streamlit Cloud
 BASE_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
 PARAMS_TEMPLATE = {
     "locale": "en-US",
@@ -51,9 +51,6 @@ def get_default_facility_descriptions():
 
 # --- Selenium helpers ---
 def create_driver():
-    """
-    Headless Chrome for Streamlit Cloud with writable webdriver_manager cache.
-    """
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -63,12 +60,11 @@ def create_driver():
 
     options.binary_location = "/usr/bin/chromium"
 
+    # Use /tmp/selenium as a writable cache
     cache_dir = "/tmp/selenium"
     os.makedirs(cache_dir, exist_ok=True)
-    os.environ["WDM_LOCAL"] = "1"
-    os.environ["WDM_CACHE"] = cache_dir
+    service = Service(ChromeDriverManager(path=cache_dir).install())
 
-    service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
@@ -93,9 +89,6 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     return url
 
 def check_availability(date_str, start_time, end_time, facility_ids):
-    """
-    Checks ice availability for a date and facilities. Thread-safe.
-    """
     driver = create_driver()
     start_runtime = time.time()
     url = build_url_for_date(date_str, start_time, end_time, facility_ids)
@@ -126,70 +119,77 @@ st.markdown("Checks City of Ottawa last minute ice times (LMI for 15 days).")
 st.sidebar.header("Settings")
 st.sidebar.markdown("---")
 
-# Initialize session state
-if "start_time_widget" not in st.session_state:
-    st.session_state.start_time_widget = datetime.time(8,0)
-if "end_time_widget" not in st.session_state:
-    st.session_state.end_time_widget = datetime.time(21,0)
-if "day_filter_widget" not in st.session_state:
-    st.session_state.day_filter_widget = "Weekdays"
+# --- Session state initialization ---
+if "start_time" not in st.session_state:
+    st.session_state.start_time = datetime.time(8,0)
+if "end_time" not in st.session_state:
+    st.session_state.end_time = datetime.time(21,0)
+if "day_filter" not in st.session_state:
+    st.session_state.day_filter = "Weekdays"
 if "selected_facilities" not in st.session_state:
     st.session_state.selected_facilities = []
 
-# Sidebar widgets
+# --- Sidebar widgets ---
 start_date = st.sidebar.date_input("Start Date", value=datetime.date.today())
 num_days = st.sidebar.slider("Number of Days to Check", 1, 15, 15)
 
-start_time = st.sidebar.time_input("Start Time", key="start_time_widget")
-end_time = st.sidebar.time_input("End Time", key="end_time_widget")
+start_time = st.sidebar.time_input("Start Time", key="start_time", value=st.session_state.start_time)
+end_time = st.sidebar.time_input("End Time", key="end_time", value=st.session_state.end_time)
 
 # Facility selection
 selected_descriptions = st.sidebar.multiselect(
     "Select Facilities",
     options=FACILITY_DESCRIPTIONS,
+    default=st.session_state.selected_facilities,
     key="selected_facilities"
 )
 facility_ids = [FACILITIES[desc] for desc in selected_descriptions] if selected_descriptions else []
 
-# Select All / Clear All
+# --- Select All / Clear All buttons ---
+def select_all_facilities():
+    st.session_state.selected_facilities = FACILITY_DESCRIPTIONS.copy()
+
+def clear_all_facilities():
+    st.session_state.selected_facilities = []
+
 col1, col2 = st.sidebar.columns([1,1])
-col1.button("Select All", on_click=lambda: st.session_state.selected_facilities.extend(FACILITY_DESCRIPTIONS))
-col2.button("Clear All", on_click=lambda: st.session_state.selected_facilities.clear())
+col1.button("Select All", on_click=select_all_facilities)
+col2.button("Clear All", on_click=clear_all_facilities)
 
 # Day Filter
 day_filter = st.sidebar.radio(
     "Filter Dates:",
     ["Weekdays","Weekends","Any Day"],
-    index=["Weekdays","Weekends","Any Day"].index(st.session_state.day_filter_widget),
-    key="day_filter_widget"
+    index=["Weekdays","Weekends","Any Day"].index(st.session_state.day_filter),
+    key="day_filter"
 )
 
-# Check Ice Times button
+# Check Ice Times
 check_button = st.sidebar.button("Check Ice Times")
 st.sidebar.markdown("---")
 
 # Quick Defaults
 def set_weekday_evening():
-    st.session_state.start_time_widget = datetime.time(17,0)
-    st.session_state.end_time_widget = datetime.time(21,0)
-    st.session_state.day_filter_widget = "Weekdays"
+    st.session_state.start_time = datetime.time(17,0)
+    st.session_state.end_time = datetime.time(21,0)
+    st.session_state.day_filter = "Weekdays"
     st.session_state.selected_facilities = get_default_facility_descriptions()
 
 def set_weekend():
-    st.session_state.start_time_widget = datetime.time(8,0)
-    st.session_state.end_time_widget = datetime.time(21,0)
-    st.session_state.day_filter_widget = "Weekends"
+    st.session_state.start_time = datetime.time(8,0)
+    st.session_state.end_time = datetime.time(21,0)
+    st.session_state.day_filter = "Weekends"
     st.session_state.selected_facilities = get_default_facility_descriptions()
 
 st.sidebar.markdown("Quick Defaults")
 st.sidebar.button("Weekday Evening", on_click=set_weekday_evening)
 st.sidebar.button("Weekend", on_click=set_weekend)
 
-# Generate target dates
+# --- Generate target dates ---
 all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days)]
-if st.session_state.day_filter_widget == "Weekdays":
+if st.session_state.day_filter == "Weekdays":
     TARGET_DATES = [d.isoformat() for d in all_dates if d.weekday() < 5]
-elif st.session_state.day_filter_widget == "Weekends":
+elif st.session_state.day_filter == "Weekends":
     TARGET_DATES = [d.isoformat() for d in all_dates if d.weekday() >= 5]
 else:
     TARGET_DATES = [d.isoformat() for d in all_dates]
@@ -210,8 +210,8 @@ if check_button:
                     executor.submit(
                         check_availability,
                         date,
-                        st.session_state.start_time_widget.strftime("%H:%M"),
-                        st.session_state.end_time_widget.strftime("%H:%M"),
+                        st.session_state.start_time.strftime("%H:%M"),
+                        st.session_state.end_time.strftime("%H:%M"),
                         facility_ids
                     ): date for date in TARGET_DATES
                 }
@@ -222,7 +222,7 @@ if check_button:
         st.subheader(f"City of Ottawa Last Minute Ice")
         st.markdown("---")
         st.subheader(f"{TARGET_DATES[0]} to {TARGET_DATES[-1]}")
-        st.subheader(f"Earliest start {start_time} latest finish {end_time}")
+        st.subheader(f"Earliest start {st.session_state.start_time} latest finish {st.session_state.end_time}")
 
         any_available = False
         any_notavailable = False
