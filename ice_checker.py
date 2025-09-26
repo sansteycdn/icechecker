@@ -4,6 +4,7 @@ import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -70,27 +71,37 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     return url
 
 def create_driver():
-    # Set up Chrome options
+    """
+    Create a headless Chrome driver for Streamlit Cloud.
+    Uses webdriver_manager to automatically download a compatible ChromeDriver.
+    """
     options = Options()
     options.add_argument("--headless=new")        # Headless mode
     options.add_argument("--no-sandbox")          # Required on Linux containers
-    options.add_argument("--disable-dev-shm-usage")  # Avoid /dev/shm issues
+    options.add_argument("--disable-dev-shm-usage")  # Avoid memory issues
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-
-    # Path to Chromium and ChromeDriver on Streamlit Cloud
+    
+    # Point to Streamlit Cloud chromium binary
     options.binary_location = "/usr/bin/chromium"
-    service = Service("/usr/bin/chromedriver")
-
-    # Create and return driver
+    
+    # Use webdriver_manager to get compatible driver
+    service = Service(ChromeDriverManager().install())
+    
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
 def check_availability(date_str, start_time, end_time, facility_ids):
+    """
+    Checks ice availability for a given date and facilities.
+    Runs headless Chrome via Selenium in Streamlit Cloud.
+    """
     driver = create_driver()
     start_runtime = time.time()
+    
     url = build_url_for_date(date_str, start_time, end_time, facility_ids)
     driver.get(url)
+    
     wait = WebDriverWait(driver, 5)
     try:
         no_results_div = wait.until(
@@ -98,7 +109,8 @@ def check_availability(date_str, start_time, end_time, facility_ids):
         )
         status = False if "No results found" in no_results_div.text else True
     except:
-        status = True
+        status = True  # Assume results exist if element not found
+    
     runtime = time.time() - start_runtime
     driver.quit()
     return date_str, status, runtime, url
