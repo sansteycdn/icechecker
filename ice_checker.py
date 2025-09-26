@@ -1,31 +1,28 @@
-# ice_checker_streamlit_supabase.py
+# ice_checker.py
 
 import streamlit as st
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-import os
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-
+from webdriver_manager.chrome import ChromeDriverManager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import urllib.parse
 import json
+import time
 from supabase import create_client, Client
+import os
 
 # --- Supabase setup ---
-SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inluamhtc2djY290Zml4c2F3c2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4OTI5MzIsImV4cCI6MjA3NDQ2ODkzMn0.2qiBqYStes_4JWDQ8R4RUQfY95pCGF_yGIuVB7MZFjg"
+SUPABASE_URL = "https://cdqilvksolwmnonqhlbc.supabase.co"
+SUPABASE_KEY = "YOUR_SUPABASE_KEY"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
-MAX_BROWSERS = 3
+MAX_BROWSERS = 3  # Reduced for Streamlit Cloud memory
 BASE_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
 PARAMS_TEMPLATE = {
     "locale": "en-US",
@@ -44,16 +41,37 @@ def get_facilities():
 FACILITIES = get_facilities()
 FACILITY_DESCRIPTIONS = list(FACILITIES.keys())
 
-# --- Fetch default facilities for Quick Defaults ---
+# --- Default facility descriptions ---
 def get_default_facility_descriptions():
     data = supabase.table("defaultFacilities").select("ExtID").execute()
     if not data.data:
         return []
     ext_ids = [item["ExtID"] for item in data.data]
-    # Map ExtIDs to descriptions
     return [desc for desc, ext in FACILITIES.items() if ext in ext_ids]
 
 # --- Selenium helpers ---
+def create_driver():
+    """
+    Headless Chrome for Streamlit Cloud with writable webdriver_manager cache.
+    """
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+
+    options.binary_location = "/usr/bin/chromium"
+
+    cache_dir = "/tmp/selenium"
+    os.makedirs(cache_dir, exist_ok=True)
+    os.environ["WDM_LOCAL"] = "1"
+    os.environ["WDM_CACHE"] = cache_dir
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
+
 def build_url_for_date(date_str, start_time, end_time, facility_ids):
     event_json = {
         "fullDayBooking": False,
@@ -74,39 +92,14 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     )
     return url
 
-def create_driver():
-    """
-    Headless Chrome for Streamlit Cloud with thread-safe webdriver_manager cache.
-    """
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    # Streamlit Cloud chromium
-    options.binary_location = "/usr/bin/chromium"
-
-    # Use /tmp/selenium as a writable cache directory
-    cache_dir = "/tmp/selenium"
-    os.makedirs(cache_dir, exist_ok=True)
-    os.environ["WDM_LOCAL"] = "1"
-    os.environ["WDM_CACHE"] = cache_dir
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
-
 def check_availability(date_str, start_time, end_time, facility_ids):
     """
-    Checks ice availability for a given date and facility IDs.
-    Thread-safe for use with ThreadPoolExecutor.
+    Checks ice availability for a date and facilities. Thread-safe.
     """
     driver = create_driver()
     start_runtime = time.time()
-    
     url = build_url_for_date(date_str, start_time, end_time, facility_ids)
+
     try:
         driver.get(url)
         wait = WebDriverWait(driver, 5)
@@ -116,20 +109,19 @@ def check_availability(date_str, start_time, end_time, facility_ids):
             )
             status = False if "No results found" in no_results_div.text else True
         except:
-            status = True  # If element not found, assume results exist
+            status = True
     except Exception as e:
         status = False
         print(f"Error accessing {url}: {e}")
     finally:
         driver.quit()
-    
+
     runtime = time.time() - start_runtime
     return date_str, status, runtime, url
 
 # --- Streamlit UI ---
 st.title("🏒 Ice Time Availability Checker")
-st.markdown("Currently only checks City of Ottawa last minute ice times.")
-st.markdown("Note: City of Ottawa only shows LMI for 15 days from today.")
+st.markdown("Checks City of Ottawa last minute ice times (LMI for 15 days).")
 
 st.sidebar.header("Settings")
 st.sidebar.markdown("---")
@@ -144,15 +136,14 @@ if "day_filter_widget" not in st.session_state:
 if "selected_facilities" not in st.session_state:
     st.session_state.selected_facilities = []
 
-# --- Sidebar widgets ---
-
+# Sidebar widgets
 start_date = st.sidebar.date_input("Start Date", value=datetime.date.today())
-num_days = st.sidebar.slider("Number of Days to Check", min_value=1, max_value=15, value=15)
+num_days = st.sidebar.slider("Number of Days to Check", 1, 15, 15)
 
 start_time = st.sidebar.time_input("Start Time", key="start_time_widget")
 end_time = st.sidebar.time_input("End Time", key="end_time_widget")
 
-# Facility selection (no default param; controlled via session state)
+# Facility selection
 selected_descriptions = st.sidebar.multiselect(
     "Select Facilities",
     options=FACILITY_DESCRIPTIONS,
@@ -162,28 +153,22 @@ facility_ids = [FACILITIES[desc] for desc in selected_descriptions] if selected_
 
 # Select All / Clear All
 col1, col2 = st.sidebar.columns([1,1])
+col1.button("Select All", on_click=lambda: st.session_state.selected_facilities.extend(FACILITY_DESCRIPTIONS))
+col2.button("Clear All", on_click=lambda: st.session_state.selected_facilities.clear())
 
-def select_all():
-    st.session_state.selected_facilities = FACILITY_DESCRIPTIONS.copy()
-
-def clear_all():
-    st.session_state.selected_facilities = []
-
-col1.button("Select All", on_click=select_all)
-col2.button("Clear All", on_click=clear_all)
-
-# Day Filter Radio
+# Day Filter
 day_filter = st.sidebar.radio(
     "Filter Dates:",
-    ["Weekdays", "Weekends", "Any Day"],
+    ["Weekdays","Weekends","Any Day"],
+    index=["Weekdays","Weekends","Any Day"].index(st.session_state.day_filter_widget),
     key="day_filter_widget"
 )
 
 # Check Ice Times button
-check_button = st.sidebar.button("Check Ice Times", help="Click to check ice time availability")
+check_button = st.sidebar.button("Check Ice Times")
 st.sidebar.markdown("---")
 
-# Quick Defaults callbacks
+# Quick Defaults
 def set_weekday_evening():
     st.session_state.start_time_widget = datetime.time(17,0)
     st.session_state.end_time_widget = datetime.time(21,0)
@@ -200,7 +185,7 @@ st.sidebar.markdown("Quick Defaults")
 st.sidebar.button("Weekday Evening", on_click=set_weekday_evening)
 st.sidebar.button("Weekend", on_click=set_weekend)
 
-# --- Generate target dates ---
+# Generate target dates
 all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days)]
 if st.session_state.day_filter_widget == "Weekdays":
     TARGET_DATES = [d.isoformat() for d in all_dates if d.weekday() < 5]
@@ -209,7 +194,7 @@ elif st.session_state.day_filter_widget == "Weekends":
 else:
     TARGET_DATES = [d.isoformat() for d in all_dates]
 
-# --- Main Results Output ---
+# --- Main Results ---
 st.markdown("\n\n")
 if check_button:
     if not facility_ids:
@@ -245,7 +230,7 @@ if check_button:
             status, runtime, url = results[date_str]
             if status:
                 any_available = True
-                st.markdown(f"**{date_str}**: ✅ Last Minute Ottawa ice times are available. ([View here]({url}))")
+                st.markdown(f"**{date_str}**: ✅ Ice times available ([View here]({url}))")
             else:
                 any_notavailable = True
 
