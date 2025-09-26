@@ -2,6 +2,7 @@
 
 import streamlit as st
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -69,12 +70,21 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     return url
 
 def create_driver():
+    # Set up Chrome options
     options = Options()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless=new")        # Headless mode
+    options.add_argument("--no-sandbox")          # Required on Linux containers
+    options.add_argument("--disable-dev-shm-usage")  # Avoid /dev/shm issues
     options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    return webdriver.Chrome(options=options)
+    options.add_argument("--window-size=1920,1080")
+
+    # Path to Chromium and ChromeDriver on Streamlit Cloud
+    options.binary_location = "/usr/bin/chromium"
+    service = Service("/usr/bin/chromedriver")
+
+    # Create and return driver
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
 
 def check_availability(date_str, start_time, end_time, facility_ids):
     driver = create_driver()
