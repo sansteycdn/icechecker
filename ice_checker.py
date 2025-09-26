@@ -1,18 +1,22 @@
 # ice_checker_streamlit_supabase.py
 
 import streamlit as st
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
+import os
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import time
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import urllib.parse
 import json
-import time
 from supabase import create_client, Client
 
 # --- Supabase setup ---
@@ -21,7 +25,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
-MAX_BROWSERS = 5
+MAX_BROWSERS = 3
 BASE_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
 PARAMS_TEMPLATE = {
     "locale": "en-US",
@@ -73,46 +77,52 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
 def create_driver():
     """
     Create a headless Chrome driver for Streamlit Cloud.
-    Uses webdriver_manager to automatically download a compatible ChromeDriver.
+    Uses webdriver_manager with /tmp cache to avoid read-only errors.
     """
     options = Options()
-    options.add_argument("--headless=new")        # Headless mode
-    options.add_argument("--no-sandbox")          # Required on Linux containers
-    options.add_argument("--disable-dev-shm-usage")  # Avoid memory issues
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
-    
-    # Point to Streamlit Cloud chromium binary
+
+    # Streamlit Cloud chromium binary
     options.binary_location = "/usr/bin/chromium"
-    
-    # Use webdriver_manager to get compatible driver
+
+    # Force webdriver_manager to use /tmp
+    os.environ["WDM_LOCAL"] = "1"
+    os.environ["WDM_CACHE"] = "/tmp"
+
     service = Service(ChromeDriverManager().install())
-    
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
 def check_availability(date_str, start_time, end_time, facility_ids):
     """
-    Checks ice availability for a given date and facilities.
-    Runs headless Chrome via Selenium in Streamlit Cloud.
+    Checks ice availability for a given date and facility IDs.
+    Thread-safe for use with ThreadPoolExecutor.
     """
     driver = create_driver()
     start_runtime = time.time()
     
     url = build_url_for_date(date_str, start_time, end_time, facility_ids)
-    driver.get(url)
-    
-    wait = WebDriverWait(driver, 5)
     try:
-        no_results_div = wait.until(
-            EC.presence_of_element_located((By.CLASS_NAME, "card-section-actual__empty"))
-        )
-        status = False if "No results found" in no_results_div.text else True
-    except:
-        status = True  # Assume results exist if element not found
+        driver.get(url)
+        wait = WebDriverWait(driver, 5)
+        try:
+            no_results_div = wait.until(
+                EC.presence_of_element_located((By.CLASS_NAME, "card-section-actual__empty"))
+            )
+            status = False if "No results found" in no_results_div.text else True
+        except:
+            status = True  # If element not found, assume results exist
+    except Exception as e:
+        status = False
+        print(f"Error accessing {url}: {e}")
+    finally:
+        driver.quit()
     
     runtime = time.time() - start_runtime
-    driver.quit()
     return date_str, status, runtime, url
 
 # --- Streamlit UI ---
