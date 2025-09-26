@@ -1,28 +1,18 @@
 # ice_checker.py
 
 import streamlit as st
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
 import datetime
 import urllib.parse
 import json
-import time
 from supabase import create_client, Client
-import os
 
 # --- Supabase setup ---
-SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inluamhtc2djY290Zml4c2F3c2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4OTI5MzIsImV4cCI6MjA3NDQ2ODkzMn0.2qiBqYStes_4JWDQ8R4RUQfY95pCGF_yGIuVB7MZFjg"
+SUPABASE_URL = "https://cdqilvksolwmnonqhlbc.supabase.co"
+SUPABASE_KEY = "YOUR_SUPABASE_KEY"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
-MAX_BROWSERS = 3  # Reduce for Streamlit Cloud
 BASE_URL = "https://anc.ca.apm.activecommunities.com/ottawa/reservation/search"
 PARAMS_TEMPLATE = {
     "locale": "en-US",
@@ -49,25 +39,7 @@ def get_default_facility_descriptions():
     ext_ids = [item["ExtID"] for item in data.data]
     return [desc for desc, ext in FACILITIES.items() if ext in ext_ids]
 
-# --- Selenium helpers ---
-def create_driver():
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--window-size=1920,1080")
-
-    options.binary_location = "/usr/bin/chromium"
-
-    # Use /tmp/selenium as a writable cache
-    cache_dir = "/tmp/selenium"
-    os.makedirs(cache_dir, exist_ok=True)
-    service = Service(ChromeDriverManager(path=cache_dir).install())
-
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
-
+# --- Build URL and fetch availability ---
 def build_url_for_date(date_str, start_time, end_time, facility_ids):
     event_json = {
         "fullDayBooking": False,
@@ -89,28 +61,19 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
     return url
 
 def check_availability(date_str, start_time, end_time, facility_ids):
-    driver = create_driver()
-    start_runtime = time.time()
     url = build_url_for_date(date_str, start_time, end_time, facility_ids)
-
     try:
-        driver.get(url)
-        wait = WebDriverWait(driver, 5)
-        try:
-            no_results_div = wait.until(
-                EC.presence_of_element_located((By.CLASS_NAME, "card-section-actual__empty"))
-            )
-            status = False if "No results found" in no_results_div.text else True
-        except:
-            status = True
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            text = response.text
+            # Basic check for "No results found"
+            status = "No results found" not in text
+        else:
+            status = False
     except Exception as e:
+        print(f"Error fetching {url}: {e}")
         status = False
-        print(f"Error accessing {url}: {e}")
-    finally:
-        driver.quit()
-
-    runtime = time.time() - start_runtime
-    return date_str, status, runtime, url
+    return date_str, status, url
 
 # --- Streamlit UI ---
 st.title("🏒 Ice Time Availability Checker")
@@ -145,7 +108,7 @@ selected_descriptions = st.sidebar.multiselect(
 )
 facility_ids = [FACILITIES[desc] for desc in selected_descriptions] if selected_descriptions else []
 
-# --- Select All / Clear All buttons ---
+# Select All / Clear All buttons
 def select_all_facilities():
     st.session_state.selected_facilities = FACILITY_DESCRIPTIONS.copy()
 
@@ -164,10 +127,6 @@ day_filter = st.sidebar.radio(
     key="day_filter"
 )
 
-# Check Ice Times
-check_button = st.sidebar.button("Check Ice Times")
-st.sidebar.markdown("---")
-
 # Quick Defaults
 def set_weekday_evening():
     st.session_state.start_time = datetime.time(17,0)
@@ -184,6 +143,10 @@ def set_weekend():
 st.sidebar.markdown("Quick Defaults")
 st.sidebar.button("Weekday Evening", on_click=set_weekday_evening)
 st.sidebar.button("Weekend", on_click=set_weekend)
+
+# Check Ice Times
+check_button = st.sidebar.button("Check Ice Times")
+st.sidebar.markdown("---")
 
 # --- Generate target dates ---
 all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days)]
@@ -203,9 +166,10 @@ if check_button:
         st.markdown("No ice times were found for the selected dates.")
     else:
         results = {}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         overall_start = time.time()
         with st.spinner("Checking ice time availability..."):
-            with ThreadPoolExecutor(max_workers=MAX_BROWSERS) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_date = {
                     executor.submit(
                         check_availability,
@@ -216,8 +180,8 @@ if check_button:
                     ): date for date in TARGET_DATES
                 }
                 for future in as_completed(future_to_date):
-                    date_str, status, runtime, url = future.result()
-                    results[date_str] = (status, runtime, url)
+                    date_str, status, url = future.result()
+                    results[date_str] = (status, url)
 
         st.subheader(f"City of Ottawa Last Minute Ice")
         st.markdown("---")
@@ -227,7 +191,7 @@ if check_button:
         any_available = False
         any_notavailable = False
         for date_str in sorted(results.keys()):
-            status, runtime, url = results[date_str]
+            status, url = results[date_str]
             if status:
                 any_available = True
                 st.markdown(f"**{date_str}**: ✅ Ice times available ([View here]({url}))")
