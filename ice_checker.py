@@ -5,11 +5,18 @@ import requests
 import datetime
 import urllib.parse
 import json
+import time
+import os  # <-- for environment variables
 from supabase import create_client, Client
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Supabase setup ---
 SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inluamhtc2djY290Zml4c2F3c2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4OTI5MzIsImV4cCI6MjA3NDQ2ODkzMn0.2qiBqYStes_4JWDQ8R4RUQfY95pCGF_yGIuVB7MZFjg"
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")  # <-- get key from environment variable
+if not SUPABASE_KEY:
+    st.error("Supabase key not found. Set the SUPABASE_KEY environment variable.")
+    st.stop()
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
@@ -56,7 +63,7 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
         f"&resourceType={PARAMS_TEMPLATE['resourceType']}"
         f"&equipmentQty={PARAMS_TEMPLATE['equipmentQty']}"
         f"&eventDateAndTime={encoded_event}"
-        f"&facilityCenterIds={','.join(facility_ids)}"
+        f"&facilityCenterIds={','.join(str(fac_id) for fac_id in facility_ids)}"
     )
     return url
 
@@ -66,7 +73,6 @@ def check_availability(date_str, start_time, end_time, facility_ids):
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             text = response.text
-            # Basic check for "No results found"
             status = "No results found" not in text
         else:
             status = False
@@ -84,9 +90,9 @@ st.sidebar.markdown("---")
 
 # --- Session state initialization ---
 if "start_time" not in st.session_state:
-    st.session_state.start_time = datetime.time(8,0)
+    st.session_state.start_time = datetime.time(8, 0)
 if "end_time" not in st.session_state:
-    st.session_state.end_time = datetime.time(21,0)
+    st.session_state.end_time = datetime.time(21, 0)
 if "day_filter" not in st.session_state:
     st.session_state.day_filter = "Weekdays"
 if "selected_facilities" not in st.session_state:
@@ -96,14 +102,20 @@ if "selected_facilities" not in st.session_state:
 start_date = st.sidebar.date_input("Start Date", value=datetime.date.today())
 num_days = st.sidebar.slider("Number of Days to Check", 1, 15, 15)
 
-start_time = st.sidebar.time_input("Start Time", key="start_time", value=st.session_state.start_time)
-end_time = st.sidebar.time_input("End Time", key="end_time", value=st.session_state.end_time)
+# Only set `value` if the key isn't already in session_state
+start_time = st.sidebar.time_input(
+    "Start Time", 
+    key="start_time"
+)
+end_time = st.sidebar.time_input(
+    "End Time",
+    key="end_time"
+)
 
 # Facility selection
 selected_descriptions = st.sidebar.multiselect(
     "Select Facilities",
     options=FACILITY_DESCRIPTIONS,
-    default=st.session_state.selected_facilities,
     key="selected_facilities"
 )
 facility_ids = [FACILITIES[desc] for desc in selected_descriptions] if selected_descriptions else []
@@ -127,7 +139,11 @@ day_filter = st.sidebar.radio(
     key="day_filter"
 )
 
-# Quick Defaults
+# Check Ice Times button
+check_button = st.sidebar.button("Check Ice Times")
+st.sidebar.markdown("---")  # line break before Quick Defaults
+
+# --- Quick Defaults below Check Ice Times ---
 def set_weekday_evening():
     st.session_state.start_time = datetime.time(17,0)
     st.session_state.end_time = datetime.time(21,0)
@@ -143,10 +159,6 @@ def set_weekend():
 st.sidebar.markdown("Quick Defaults")
 st.sidebar.button("Weekday Evening", on_click=set_weekday_evening)
 st.sidebar.button("Weekend", on_click=set_weekend)
-
-# Check Ice Times
-check_button = st.sidebar.button("Check Ice Times")
-st.sidebar.markdown("---")
 
 # --- Generate target dates ---
 all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days)]
@@ -166,7 +178,6 @@ if check_button:
         st.markdown("No ice times were found for the selected dates.")
     else:
         results = {}
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         overall_start = time.time()
         with st.spinner("Checking ice time availability..."):
             with ThreadPoolExecutor(max_workers=5) as executor:
@@ -194,7 +205,7 @@ if check_button:
             status, url = results[date_str]
             if status:
                 any_available = True
-                st.markdown(f"**{date_str}**: ✅ Ice times available ([View here]({url}))")
+                st.markdown(f"**{date_str}**: ✅ Last Minute Ottawa ice times are available. ([View here]({url}))")
             else:
                 any_notavailable = True
 
