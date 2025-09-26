@@ -17,8 +17,8 @@ from supabase import create_client, Client
 import os
 
 # --- Supabase setup ---
-SUPABASE_URL = "https://cdqilvksolwmnonqhlbc.supabase.co"
-SUPABASE_KEY = "YOUR_SUPABASE_KEY"
+SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inluamhtc2djY290Zml4c2F3c2x2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4OTI5MzIsImV4cCI6MjA3NDQ2ODkzMn0.2qiBqYStes_4JWDQ8R4RUQfY95pCGF_yGIuVB7MZFjg"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- Config ---
