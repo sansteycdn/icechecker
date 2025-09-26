@@ -76,8 +76,7 @@ def build_url_for_date(date_str, start_time, end_time, facility_ids):
 
 def create_driver():
     """
-    Create a headless Chrome driver for Streamlit Cloud.
-    Uses webdriver_manager with /tmp cache to avoid read-only errors.
+    Headless Chrome for Streamlit Cloud with thread-safe webdriver_manager cache.
     """
     options = Options()
     options.add_argument("--headless=new")
@@ -86,12 +85,14 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
 
-    # Streamlit Cloud chromium binary
+    # Streamlit Cloud chromium
     options.binary_location = "/usr/bin/chromium"
 
-    # Force webdriver_manager to use /tmp
+    # Use /tmp/selenium as a writable cache directory
+    cache_dir = "/tmp/selenium"
+    os.makedirs(cache_dir, exist_ok=True)
     os.environ["WDM_LOCAL"] = "1"
-    os.environ["WDM_CACHE"] = "/tmp"
+    os.environ["WDM_CACHE"] = cache_dir
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
