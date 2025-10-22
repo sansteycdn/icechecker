@@ -9,8 +9,10 @@ from supabase import create_client, Client
 import requests
 import urllib.parse
 import json
+import pytz
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 # --- Supabase setup ---
 SUPABASE_URL = "https://ynjhmsgccotfixsawslv.supabase.co"
@@ -75,17 +77,23 @@ def check_availability(date_str, start_time, end_time, facility_ids):
     return date_str, False, url_ref
 
 def run_check(start_time, end_time, day_filter, label):
+    import pytz
+
     print(f"--- Running {label} check ---")
+
+    # Log current time in UTC and EST
+    now_utc = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
+    est = pytz.timezone("America/Toronto")
+    now_est = now_utc.astimezone(est)
+    print(f"Current UTC time: {now_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f"Current EST time: {now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
     # Fetch facilities and defaults
     facilities = get_facilities()
     selected = get_default_facility_descriptions()
     print(f"Default selected facilities: {selected}")
 
-    # Normalize facility names to avoid encoding issues
     selected_normalized = [unicodedata.normalize("NFC", s) for s in selected]
-
-    # Build facility IDs
     facility_ids = [facilities[desc] for desc in selected_normalized if desc in facilities]
     print(f"Facility IDs being used: {facility_ids}")
 
@@ -105,7 +113,10 @@ def run_check(start_time, end_time, day_filter, label):
 
     print(f"Checking {len(target_dates)} dates: {target_dates}")
 
-    # Check availability concurrently
+    # Log the times being checked in EST
+    print(f"Start time (EST): {start_time.strftime('%H:%M')}")
+    print(f"End time (EST): {end_time.strftime('%H:%M')}")
+
     results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
@@ -126,7 +137,6 @@ def run_check(start_time, end_time, day_filter, label):
 
     print(f"{label} — Total available ice times found: {len(results)}")
 
-    # Send email if results exist
     if results:
         print("Sending email...")
         try:
