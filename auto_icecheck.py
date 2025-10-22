@@ -1,5 +1,6 @@
 # auto_check.py
 
+import unicodedata
 import datetime
 import os
 import smtplib
@@ -75,13 +76,23 @@ def check_availability(date_str, start_time, end_time, facility_ids):
 
 def run_check(start_time, end_time, day_filter, label):
     print(f"--- Running {label} check ---")
-    
-    # Fetch facilities and default selections
+
+    # Fetch facilities and defaults
     facilities = get_facilities()
     selected = get_default_facility_descriptions()
     print(f"Default selected facilities: {selected}")
-    facility_ids = [facilities[desc] for desc in selected]
-    
+
+    # Normalize facility names to avoid encoding issues
+    selected_normalized = [unicodedata.normalize("NFC", s) for s in selected]
+
+    # Build facility IDs
+    facility_ids = [facilities[desc] for desc in selected_normalized if desc in facilities]
+    print(f"Facility IDs being used: {facility_ids}")
+
+    if not facility_ids:
+        print("No valid facility IDs found! Exiting this check.")
+        return
+
     # Generate target dates
     today = datetime.date.today()
     all_dates = [today + datetime.timedelta(days=i) for i in range(16)]
@@ -91,7 +102,7 @@ def run_check(start_time, end_time, day_filter, label):
         target_dates = [d.isoformat() for d in all_dates if d.weekday() >= 5]
     else:
         target_dates = [d.isoformat() for d in all_dates]
-    
+
     print(f"Checking {len(target_dates)} dates: {target_dates}")
 
     # Check availability concurrently
@@ -104,25 +115,29 @@ def run_check(start_time, end_time, day_filter, label):
                 start_time.strftime("%H:%M"),
                 end_time.strftime("%H:%M"),
                 facility_ids
-            ) for date in target_dates
+            )
+            for date in target_dates
         ]
         for f in as_completed(futures):
             date_str, status, url = f.result()
             print(f"Checked {date_str}: {'Available' if status else 'Not available'}")
             if status:
                 results.append((date_str, url))
-    
+
     print(f"{label} — Total available ice times found: {len(results)}")
-    
+
     # Send email if results exist
     if results:
         print("Sending email...")
-        send_email(results, label)
+        try:
+            send_email(results, label)
+            print("Email sent successfully ✅")
+        except Exception as e:
+            print("Email sending failed ❌:", e)
     else:
         print("No results found — skipping email.")
-    
-    print(f"--- Finished {label} check ---\n")
 
+    print(f"--- Finished {label} check ---\n")
 
 def send_email(results, label):
     sender = "your_email@gmail.com"
