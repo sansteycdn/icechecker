@@ -77,22 +77,29 @@ def check_availability(date_str, start_time, end_time, facility_ids):
     return date_str, False, url_ref
 
 def run_check(start_time, end_time, day_filter, label):
-    import pytz
-
     print(f"--- Running {label} check ---")
 
-    # Log current time in UTC and EST
+    # Log current UTC and EST time
     now_utc = datetime.datetime.utcnow().replace(tzinfo=pytz.UTC)
     est = pytz.timezone("America/Toronto")
     now_est = now_utc.astimezone(est)
     print(f"Current UTC time: {now_utc.strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print(f"Current EST time: {now_est.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
+    # Convert start_time and end_time (ET) to UTC
+    today = datetime.date.today()
+    start_dt_est = est.localize(datetime.datetime.combine(today, start_time))
+    end_dt_est = est.localize(datetime.datetime.combine(today, end_time))
+    start_time_utc = start_dt_est.astimezone(pytz.UTC)
+    end_time_utc = end_dt_est.astimezone(pytz.UTC)
+    print(f"Checking times (converted to UTC): {start_time_utc.strftime('%H:%M')} - {end_time_utc.strftime('%H:%M')}")
+
     # Fetch facilities and defaults
     facilities = get_facilities()
     selected = get_default_facility_descriptions()
     print(f"Default selected facilities: {selected}")
 
+    # Normalize facility names
     selected_normalized = [unicodedata.normalize("NFC", s) for s in selected]
     facility_ids = [facilities[desc] for desc in selected_normalized if desc in facilities]
     print(f"Facility IDs being used: {facility_ids}")
@@ -102,7 +109,6 @@ def run_check(start_time, end_time, day_filter, label):
         return
 
     # Generate target dates
-    today = datetime.date.today()
     all_dates = [today + datetime.timedelta(days=i) for i in range(16)]
     if day_filter == "Weekdays":
         target_dates = [d.isoformat() for d in all_dates if d.weekday() < 5]
@@ -113,18 +119,15 @@ def run_check(start_time, end_time, day_filter, label):
 
     print(f"Checking {len(target_dates)} dates: {target_dates}")
 
-    # Log the times being checked in EST
-    print(f"Start time (EST): {start_time.strftime('%H:%M')}")
-    print(f"End time (EST): {end_time.strftime('%H:%M')}")
-
+    # Check availability concurrently
     results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
             executor.submit(
                 check_availability,
                 date,
-                start_time.strftime("%H:%M"),
-                end_time.strftime("%H:%M"),
+                start_time_utc.strftime("%H:%M"),
+                end_time_utc.strftime("%H:%M"),
                 facility_ids
             )
             for date in target_dates
@@ -137,6 +140,7 @@ def run_check(start_time, end_time, day_filter, label):
 
     print(f"{label} — Total available ice times found: {len(results)}")
 
+    # Send email if results exist
     if results:
         print("Sending email...")
         try:
