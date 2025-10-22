@@ -1,0 +1,32 @@
+name: Daily Ice Checker
+
+on:
+  schedule:
+    - cron: "0 11 * * *"  # Every day at 07:00 AM Toronto (UTC-4)
+  workflow_dispatch:      # Allows manual run from GitHub web UI
+
+jobs:
+  run-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Ice Check
+        env:
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: |
+          python auto_check.py
