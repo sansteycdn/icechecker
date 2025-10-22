@@ -178,7 +178,7 @@ st.sidebar.button("Weekday Evening", on_click=set_weekday_evening)
 st.sidebar.button("Weekend", on_click=set_weekend)
 
 # --- Generate target dates ---
-all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days)]
+all_dates = [start_date + datetime.timedelta(days=i) for i in range(num_days + 1)]
 if st.session_state.day_filter == "Weekdays":
     TARGET_DATES = [d.isoformat() for d in all_dates if d.weekday() < 5]
 elif st.session_state.day_filter == "Weekends":
