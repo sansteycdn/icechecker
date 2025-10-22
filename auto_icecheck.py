@@ -74,9 +74,15 @@ def check_availability(date_str, start_time, end_time, facility_ids):
     return date_str, False, url_ref
 
 def run_check(start_time, end_time, day_filter, label):
+    print(f"--- Running {label} check ---")
+    
+    # Fetch facilities and default selections
     facilities = get_facilities()
     selected = get_default_facility_descriptions()
+    print(f"Default selected facilities: {selected}")
     facility_ids = [facilities[desc] for desc in selected]
+    
+    # Generate target dates
     today = datetime.date.today()
     all_dates = [today + datetime.timedelta(days=i) for i in range(16)]
     if day_filter == "Weekdays":
@@ -85,19 +91,38 @@ def run_check(start_time, end_time, day_filter, label):
         target_dates = [d.isoformat() for d in all_dates if d.weekday() >= 5]
     else:
         target_dates = [d.isoformat() for d in all_dates]
+    
+    print(f"Checking {len(target_dates)} dates: {target_dates}")
 
+    # Check availability concurrently
     results = []
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [
-            executor.submit(check_availability, date, start_time.strftime("%H:%M"), end_time.strftime("%H:%M"), facility_ids)
-            for date in target_dates
+            executor.submit(
+                check_availability,
+                date,
+                start_time.strftime("%H:%M"),
+                end_time.strftime("%H:%M"),
+                facility_ids
+            ) for date in target_dates
         ]
         for f in as_completed(futures):
             date_str, status, url = f.result()
+            print(f"Checked {date_str}: {'Available' if status else 'Not available'}")
             if status:
                 results.append((date_str, url))
+    
+    print(f"{label} — Total available ice times found: {len(results)}")
+    
+    # Send email if results exist
     if results:
+        print("Sending email...")
         send_email(results, label)
+    else:
+        print("No results found — skipping email.")
+    
+    print(f"--- Finished {label} check ---\n")
+
 
 def send_email(results, label):
     sender = "your_email@gmail.com"
